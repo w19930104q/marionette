@@ -62,7 +62,7 @@ module Marionette
         HTTP::Client.get(File.join(url.to_s, "shutdown"))
         0.upto(30).each do
           if open?
-            sleep 1000
+            sleep 1.second
           else
             break
           end
@@ -82,16 +82,40 @@ module Marionette
       !open?
     end
 
+    # Stops the driver process. Safe to call multiple times. Waits for
+    # the process to actually exit, escalating from SIGINT to SIGKILL
+    # if it doesn't shut down gracefully.
     def stop
       if process = @process
         send_remote_shutdown
 
-        begin
-          process.signal(Signal::INT)
-          process.signal(Signal::KILL)
-          @process = nil
-        rescue ex
+        unless process.terminated?
+          begin
+            process.signal(Signal::INT)
+          rescue ex
+          end
+
+          # Give the process a chance to exit gracefully
+          50.times do
+            break if process.terminated?
+            sleep 100.milliseconds
+          end
+
+          unless process.terminated?
+            begin
+              process.signal(Signal::KILL)
+            rescue ex
+            end
+          end
+
+          # Confirm the driver process has exited
+          begin
+            process.wait
+          rescue ex
+          end
         end
+
+        @process = nil
       end
     end
 

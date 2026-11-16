@@ -25,6 +25,7 @@ module Marionette
                    @service = nil,
                    @w3c = false)
       @mutex = Mutex.new
+      @stopped = false
       at_exit do
         if (svc = @service) && !svc.closed?
           stop
@@ -82,13 +83,28 @@ module Marionette
     end
 
     # Stops the current session by closing it and then closing the
-    # WebDriver process.
+    # WebDriver process. This method is idempotent: calling it more
+    # than once has no additional effect.
     def stop
-      result = close
+      return if @stopped
+      @stopped = true
+
+      # The session may already be gone on the remote end (e.g. the
+      # browser was closed manually), so don't let that prevent the
+      # driver process from being shut down.
+      result = begin
+        close
+      rescue ex
+        Log.warn { "Session#close failed during stop: #{ex.message}" }
+        nil
+      end
+
       case @type
       in Type::Local
-        service.stop
-        service = nil
+        if svc = @service
+          svc.stop
+        end
+        self.service = nil
       in Type::Remote
         # Do nothing
       end
@@ -96,7 +112,7 @@ module Marionette
     end
 
     def running?
-      @service && service.open?
+      !@stopped && !!@service && service.open?
     end
 
     def stopped?
@@ -452,19 +468,16 @@ module Marionette
 
       # TODO: Add support for this via Support::RelativeLocator
       # return execute_atom(:findElements, Support::RelativeLocator.new(what).as_json) if how == 'relative'
-      ids = Array(JSON::Any).new
-      if parent
-        # if parent.type == :element
-          id = parent.execute("FindChildElements", { using: how, value: what.to_s })
-          ids << id
-        # else :shadow_root
-        #   execute("FindShadowChildElements", { id: parent_id, using: how, value: what.to_s })
-      else
-        id = execute("FindElements", { using: how, value: what.to_s })
-        ids << id
-      end
+      ids = if parent
+              # if parent.type == :element
+              parent.execute("FindChildElements", {using: how, value: what.to_s})
+              # else :shadow_root
+              #   execute("FindShadowChildElements", { id: parent_id, using: how, value: what.to_s })
+            else
+              execute("FindElements", {using: how, value: what.to_s})
+            end
 
-      ids.map { |id| Element.new(self, element_id_from(id[0])) }
+      ids.as_a.map { |id| Element.new(self, element_id_from(id)) }
     end
 
     # Find a child of the given element. Returns `nil` if no element with the given
@@ -486,7 +499,9 @@ module Marionette
     end
 
     # Wait the given amount of time for an element to be available.
-    # If no element is found an exception will be raised.
+    # If no element is found within `timeout` an `Error::Timeout` is
+    # raised. The session itself is left running so other operations
+    # can continue.
     def wait_for_element(selector : String,
                          strategy : LocationStrategy = :css,
                          timeout = 3.seconds,
@@ -500,8 +515,7 @@ module Marionette
         end
 
         if Time.monotonic - start_time > timeout
-          stop
-          raise Error::GenericError.new("Waiting for element '#{selector}' failed")
+          raise Error::Timeout.new("Waiting for element '#{selector}' failed")
         end
 
         sleep poll_time
@@ -516,8 +530,11 @@ module Marionette
       wait_for_element(selector, strategy, timeout, poll_time) { |e| e }
     end
 
-    # Wait the given amount of time for elements to be available.
-    # If no element is found an exception will be raised.
+    # Wait the given amount of time for at least one matching element to be
+    # available, then return all matching elements. An empty result set keeps
+    # the wait going. If no elements are found within `timeout` an
+    # `Error::Timeout` is raised. The session itself is left running so
+    # other operations can continue.
     def wait_for_elements(selector : String,
                           strategy : LocationStrategy = :css,
                           timeout = 3.seconds,
@@ -526,12 +543,12 @@ module Marionette
       start_time = Time.monotonic
 
       loop do
-        if elements = find_elements(selector, strategy)
+        elements = find_elements(selector, strategy)
+        unless elements.empty?
           return yield elements
         end
 
         if Time.monotonic - start_time > timeout
-          stop
           raise Error::Timeout.new("Waiting for elements '#{selector}' failed")
         end
 
@@ -543,8 +560,7 @@ module Marionette
     def wait_for_elements(selector : String,
                           strategy : LocationStrategy = :css,
                           timeout = 3.seconds,
-                          poll_time = 50.milliseconds,
-                          &block)
+                          poll_time = 50.milliseconds)
       wait_for_elements(selector, strategy, timeout, poll_time) { |e| e }
     end
 

@@ -161,7 +161,10 @@ module Marionette
       end
     end
 
-    def move_mouse_to(element : Element, duration : Time::Span = 0.seconds)
+    # NOTE: `duration` has no default here on purpose: a default would make
+    # this overload shadow the single-argument `move_mouse_to(element)`
+    # overload above (last definition wins), breaking it for non-W3C drivers.
+    def move_mouse_to(element : Element, duration : Time::Span)
       if @session.w3c?
         w3c_action(create_pointer_move(0, 0, element, duration))
       else
@@ -308,12 +311,16 @@ module Marionette
       mouse_button_up(button, 0.seconds)
     end
 
+    def release(element : Element, button : MouseButton = :left)
+      move_mouse_to(element).mouse_button_up(button, 0.seconds)
+    end
+
     def release_right
       mouse_button_up(:right, 0.seconds)
     end
 
     def release(selector : String, button : MouseButton = :left, location_strategy : LocationStrategy = :css)
-      mouse_mouse_to(selector, location_strategy).mouse_button_up(button, 0.seconds)
+      move_mouse_to(selector, location_strategy).mouse_button_up(button, 0.seconds)
     end
 
     def release(selector : String, delta_x : Number, delta_y : Number, button : MouseButton = :left, location_strategy : LocationStrategy = :css)
@@ -321,7 +328,7 @@ module Marionette
     end
 
     def release_right(selector : String, location_strategy : LocationStrategy = :css)
-      mouse_mouse_to(selector, location_strategy).mouse_button_up(:right, 0.seconds)
+      move_mouse_to(selector, location_strategy).mouse_button_up(:right, 0.seconds)
     end
 
     def release_right(selector : String, delta_x : Number, delta_y : Number, location_strategy : LocationStrategy = :css)

@@ -9,6 +9,12 @@ TEST_DRIVER = Marionette::WebDriver.new(
   HTTP::Client.new("localhost")
 )
 
+W3C_TEST_DRIVER = Marionette::WebDriver.new(
+  :chrome,
+  URI.parse("http://localhost:4444"),
+  HTTP::Client.new("localhost")
+)
+
 TEST_SESSION = Marionette::Session.new(
   TEST_DRIVER,
   id: "TEST_SESSION_ID",
